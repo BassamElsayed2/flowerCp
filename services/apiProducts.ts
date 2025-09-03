@@ -18,6 +18,7 @@ export interface ProductType {
   product_id: string;
   name_ar: string;
   name_en: string;
+  image_url?: string;
   created_at?: string;
 }
 
@@ -220,6 +221,46 @@ export async function uploadProductImage(
 
   const { data: publicUrlData } = supabase.storage
     .from("product-images")
+    .getPublicUrl(fileName);
+
+  return publicUrlData.publicUrl;
+}
+
+export async function uploadProductTypeImage(
+  file: File | { base64: string; name: string }
+): Promise<string> {
+  let fileExt: string;
+  let fileName: string;
+  let fileData: File | ArrayBuffer;
+
+  if (file instanceof File) {
+    fileExt = file.name.split(".").pop()!;
+    fileName = `product-type-img/${Date.now()}-${Math.random()
+      .toString(36)
+      .substring(2)}.${fileExt}`;
+    fileData = file;
+  } else {
+    // Base64 case
+    fileExt = file.name.split(".").pop()!;
+    fileName = `product-type-img/${Date.now()}-${Math.random()
+      .toString(36)
+      .substring(2)}.${fileExt}`;
+    fileData = decode(file.base64);
+  }
+
+  const { error } = await supabase.storage
+    .from("product-type-img")
+    .upload(fileName, fileData, {
+      contentType: file instanceof File ? file.type : `image/${fileExt}`,
+    });
+
+  if (error) {
+    console.error("خطأ أثناء رفع صورة نوع المنتج:", error.message);
+    throw new Error("تعذر رفع صورة نوع المنتج");
+  }
+
+  const { data: publicUrlData } = supabase.storage
+    .from("product-type-img")
     .getPublicUrl(fileName);
 
   return publicUrlData.publicUrl;

@@ -26,6 +26,7 @@ import {
   getProductById,
   updateProduct,
   uploadProductImage,
+  uploadProductTypeImage,
   ProductWithTypes,
   ProductType,
   ProductSize,
@@ -55,6 +56,12 @@ export default function EditProductPage() {
   const [types, setTypes] = useState<ProductType[]>([]);
   const [sizesByType, setSizesByType] = useState<{
     [key: number]: ProductSize[];
+  }>({});
+  const [typeImages, setTypeImages] = useState<{ [key: number]: File | null }>(
+    {}
+  );
+  const [serverTypeImages, setServerTypeImages] = useState<{
+    [key: number]: string | null;
   }>({});
 
   const { register, handleSubmit, reset, control } = useForm({
@@ -105,8 +112,16 @@ export default function EditProductPage() {
             product_id: type.product_id,
             name_ar: type.name_ar,
             name_en: type.name_en,
+            image_url: type.image_url,
           }))
         );
+
+        // Set server type images
+        const typeImagesMap: { [key: number]: string | null } = {};
+        product.types.forEach((type, index) => {
+          typeImagesMap[index] = type.image_url || null;
+        });
+        setServerTypeImages(typeImagesMap);
 
         const sizesMap: { [key: number]: ProductSize[] } = {};
         product.types.forEach((type, index) => {
@@ -132,6 +147,47 @@ export default function EditProductPage() {
     setSelectedImage(file);
   };
 
+  // Handle type image upload
+  const handleTypeImageChange = (
+    typeIndex: number,
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    if (event.target.files && event.target.files[0]) {
+      const file = event.target.files[0];
+
+      // التحقق من نوع الملف
+      if (!file.type.startsWith("image/")) {
+        toast.error(`الملف ${file.name} ليس صورة`);
+        return;
+      }
+
+      // التحقق من حجم الملف (10MB كحد أقصى)
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`حجم الصورة ${file.name} يجب أن لا يتجاوز 10MB`);
+        return;
+      }
+
+      setTypeImages((prev) => ({
+        ...prev,
+        [typeIndex]: file,
+      }));
+    }
+  };
+
+  const handleRemoveTypeImage = (typeIndex: number) => {
+    setTypeImages((prev) => ({
+      ...prev,
+      [typeIndex]: null,
+    }));
+  };
+
+  const handleRemoveServerTypeImage = (typeIndex: number) => {
+    setServerTypeImages((prev) => ({
+      ...prev,
+      [typeIndex]: null,
+    }));
+  };
+
   // Types management
   const addType = () => {
     const newType: ProductType = {
@@ -144,6 +200,16 @@ export default function EditProductPage() {
 
   const removeType = (index: number) => {
     setTypes(types.filter((_, i) => i !== index));
+
+    // Remove images for this type
+    const newTypeImages = { ...typeImages };
+    delete newTypeImages[index];
+    setTypeImages(newTypeImages);
+
+    const newServerTypeImages = { ...serverTypeImages };
+    delete newServerTypeImages[index];
+    setServerTypeImages(newServerTypeImages);
+
     // Remove sizes for this type
     setSizesByType((prev) => {
       const newSizes = { ...prev };
@@ -226,16 +292,33 @@ export default function EditProductPage() {
         setIsUploadingImage(false);
       }
 
-      // Prepare types with sizes
-      const typesWithSizes = types.map((type, typeIndex) => ({
-        ...type,
-        sizes: sizesByType[typeIndex] || [],
-      }));
+      // Upload type images if any
+      const typesWithImages = await Promise.all(
+        types.map(async (type, typeIndex) => {
+          const typeImage = typeImages[typeIndex];
+          let imageUrl = serverTypeImages[typeIndex] || "";
+
+          if (typeImage) {
+            try {
+              imageUrl = await uploadProductTypeImage(typeImage);
+            } catch (error) {
+              console.error(`خطأ في رفع صورة النوع ${typeIndex + 1}:`, error);
+              toast.error(`فشل في رفع صورة النوع ${typeIndex + 1}`);
+            }
+          }
+
+          return {
+            ...type,
+            image_url: imageUrl,
+            sizes: sizesByType[typeIndex] || [],
+          };
+        })
+      );
 
       const updatedData: Partial<ProductWithTypes> = {
         ...data,
         image_url: uploadedImageUrl || serverImage || undefined,
-        types: typesWithSizes,
+        types: typesWithImages,
       };
 
       // تنفيذ التحديث في Supabase
@@ -549,6 +632,87 @@ export default function EditProductPage() {
                               updateType(typeIndex, "name_en", e.target.value)
                             }
                           />
+                        </div>
+                      </div>
+
+                      {/* Type Image Upload */}
+                      <div className="mb-4">
+                        <label className="mb-[10px] text-black dark:text-white font-medium block">
+                          صورة النوع (اختياري)
+                        </label>
+                        <div className="relative flex items-center justify-center overflow-hidden rounded-md py-[88px] px-[20px] border border-gray-200 dark:border-[#172036]">
+                          <div className="flex flex-col items-center justify-center text-center">
+                            <div className="w-[35px] h-[35px] border border-gray-100 dark:border-[#15203c] flex items-center justify-center rounded-md text-primary-500 text-lg mb-3">
+                              <i className="ri-upload-2-line"></i>
+                            </div>
+                            <p className="leading-[1.5] mb-2">
+                              <strong className="text-black dark:text-white">
+                                اضغط لرفع
+                              </strong>
+                              <br /> صورة النوع من هنا
+                            </p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                              حجم الصورة: حتى 10 ميجابايت
+                            </p>
+                          </div>
+
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="absolute top-0 left-0 right-0 bottom-0 rounded-md z-[1] opacity-0 cursor-pointer"
+                            onChange={(e) =>
+                              handleTypeImageChange(typeIndex, e)
+                            }
+                          />
+                        </div>
+
+                        {/* Image Preview */}
+                        <div className="mt-[10px] flex flex-wrap gap-2">
+                          {/* صورة السيرفر للنوع */}
+                          {serverTypeImages[typeIndex] && (
+                            <div className="relative w-[50px] h-[50px]">
+                              <Image
+                                src={serverTypeImages[typeIndex]}
+                                alt={`server-type-img-${typeIndex}`}
+                                width={50}
+                                height={50}
+                                className="rounded-md object-cover w-full h-full"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.src = "/placeholder.png";
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="absolute top-[-5px] right-[-5px] bg-red-600 text-white w-[20px] h-[20px] flex items-center justify-center rounded-full text-xs"
+                                onClick={() =>
+                                  handleRemoveServerTypeImage(typeIndex)
+                                }
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )}
+
+                          {/* صورة الرفع الجديدة للنوع */}
+                          {typeImages[typeIndex] && (
+                            <div className="relative w-[50px] h-[50px]">
+                              <Image
+                                src={URL.createObjectURL(typeImages[typeIndex])}
+                                alt={`selected-type-img-${typeIndex}`}
+                                width={50}
+                                height={50}
+                                className="rounded-md object-cover w-full h-full"
+                              />
+                              <button
+                                type="button"
+                                className="absolute top-[-5px] right-[-5px] bg-orange-500 text-white w-[20px] h-[20px] flex items-center justify-center rounded-full text-xs"
+                                onClick={() => handleRemoveTypeImage(typeIndex)}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
 

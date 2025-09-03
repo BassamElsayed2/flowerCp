@@ -26,6 +26,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   createProduct,
   uploadProductImage,
+  uploadProductTypeImage,
   ProductWithTypes,
   ProductType,
   ProductSize,
@@ -132,18 +133,26 @@ const CreateProductForm: React.FC = () => {
 
   // Types and Sizes management
   const [types, setTypes] = useState<ProductType[]>([]);
+  const [typeImages, setTypeImages] = useState<{ [key: number]: File | null }>(
+    {}
+  );
 
   const addType = () => {
     const newType: ProductType = {
       product_id: "", // Will be set when product is created
       name_ar: "",
       name_en: "",
+      image_url: "",
     };
     setTypes([...types, newType]);
   };
 
   const removeType = (index: number) => {
     setTypes(types.filter((_, i) => i !== index));
+    // Remove the image for this type
+    const newTypeImages = { ...typeImages };
+    delete newTypeImages[index];
+    setTypeImages(newTypeImages);
   };
 
   const updateType = (
@@ -154,6 +163,40 @@ const CreateProductForm: React.FC = () => {
     const updatedTypes = [...types];
     updatedTypes[index] = { ...updatedTypes[index], [field]: value };
     setTypes(updatedTypes);
+  };
+
+  // Handle type image upload
+  const handleTypeImageChange = (
+    typeIndex: number,
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    if (event.target.files && event.target.files[0]) {
+      const file = event.target.files[0];
+
+      // التحقق من نوع الملف
+      if (!file.type.startsWith("image/")) {
+        toast.error(`الملف ${file.name} ليس صورة`);
+        return;
+      }
+
+      // التحقق من حجم الملف (10MB كحد أقصى)
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`حجم الصورة ${file.name} يجب أن لا يتجاوز 10MB`);
+        return;
+      }
+
+      setTypeImages((prev) => ({
+        ...prev,
+        [typeIndex]: file,
+      }));
+    }
+  };
+
+  const handleRemoveTypeImage = (typeIndex: number) => {
+    setTypeImages((prev) => ({
+      ...prev,
+      [typeIndex]: null,
+    }));
   };
 
   // Sizes management for each type
@@ -242,11 +285,28 @@ const CreateProductForm: React.FC = () => {
       // ارفع الصورة أولاً
       const uploadedImageUrl = await uploadProductImage(selectedImage);
 
-      // تحضير البيانات مع الأحجام
-      const typesWithSizes = types.map((type, typeIndex) => ({
-        ...type,
-        sizes: sizesByType[typeIndex] || [],
-      }));
+      // ارفع صور الأنواع إذا وجدت
+      const typesWithImages = await Promise.all(
+        types.map(async (type, typeIndex) => {
+          const typeImage = typeImages[typeIndex];
+          let imageUrl = "";
+
+          if (typeImage) {
+            try {
+              imageUrl = await uploadProductTypeImage(typeImage);
+            } catch (error) {
+              console.error(`خطأ في رفع صورة النوع ${typeIndex + 1}:`, error);
+              toast.error(`فشل في رفع صورة النوع ${typeIndex + 1}`);
+            }
+          }
+
+          return {
+            ...type,
+            image_url: imageUrl,
+            sizes: sizesByType[typeIndex] || [],
+          };
+        })
+      );
 
       const finalData: ProductWithTypes = {
         title_ar: data.title_ar,
@@ -256,12 +316,12 @@ const CreateProductForm: React.FC = () => {
         category_id: data.category_id,
         user_id: userId,
         image_url: uploadedImageUrl,
-        types: typesWithSizes,
+        types: typesWithImages,
       };
 
       mutate(finalData);
     } catch (error: Error | unknown) {
-      toast.error("حدث خطأ أثناء رفع الصورة");
+      toast.error("حدث خطأ أثناء رفع الصور");
       console.error("Image upload error:", error);
     } finally {
       setIsUploadingImage(false);
@@ -593,6 +653,65 @@ const CreateProductForm: React.FC = () => {
                                 updateType(typeIndex, "name_en", e.target.value)
                               }
                             />
+                          </div>
+                        </div>
+
+                        {/* Type Image Upload */}
+                        <div className="mb-4">
+                          <label className="mb-[10px] text-black dark:text-white font-medium block">
+                            صورة النوع (اختياري)
+                          </label>
+                          <div className="relative flex items-center justify-center overflow-hidden rounded-md py-[88px] px-[20px] border border-gray-200 dark:border-[#172036]">
+                            <div className="flex flex-col items-center justify-center text-center">
+                              <div className="w-[35px] h-[35px] border border-gray-100 dark:border-[#15203c] flex items-center justify-center rounded-md text-primary-500 text-lg mb-3">
+                                <i className="ri-upload-2-line"></i>
+                              </div>
+                              <p className="leading-[1.5] mb-2">
+                                <strong className="text-black dark:text-white">
+                                  اضغط لرفع
+                                </strong>
+                                <br /> صورة النوع من هنا
+                              </p>
+                              <p className="text-sm text-gray-500 dark:text-gray-400">
+                                حجم الصورة: حتى 10 ميجابايت
+                              </p>
+                            </div>
+
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="absolute top-0 left-0 right-0 bottom-0 rounded-md z-[1] opacity-0 cursor-pointer"
+                              onChange={(e) =>
+                                handleTypeImageChange(typeIndex, e)
+                              }
+                            />
+                            {typeImages[typeIndex] && (
+                              <div className="mt-[10px] flex items-center gap-2">
+                                <div className="relative w-[50px] h-[50px]">
+                                  <Image
+                                    src={URL.createObjectURL(
+                                      typeImages[typeIndex]
+                                    )}
+                                    alt="type-preview"
+                                    width={50}
+                                    height={50}
+                                    className="rounded-md object-cover w-full h-full"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="absolute top-[-5px] right-[-5px] bg-orange-500 text-white w-[20px] h-[20px] flex items-center justify-center rounded-full text-xs rtl:right-auto rtl:left-[-5px]"
+                                    onClick={() =>
+                                      handleRemoveTypeImage(typeIndex)
+                                    }
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                                <span className="text-sm text-gray-600 dark:text-gray-400">
+                                  {typeImages[typeIndex]?.name}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
 
