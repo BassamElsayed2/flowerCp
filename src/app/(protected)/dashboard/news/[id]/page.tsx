@@ -292,34 +292,39 @@ export default function EditProductPage() {
         setIsUploadingImage(false);
       }
 
-      // Upload type images if any
-      const typesWithImages = await Promise.all(
-        types.map(async (type, typeIndex) => {
-          const typeImage = typeImages[typeIndex];
-          let imageUrl = serverTypeImages[typeIndex] || "";
-
-          if (typeImage) {
-            try {
-              imageUrl = await uploadProductTypeImage(typeImage);
-            } catch (error) {
-              console.error(`خطأ في رفع صورة النوع ${typeIndex + 1}:`, error);
-              toast.error(`فشل في رفع صورة النوع ${typeIndex + 1}`);
-            }
-          }
-
-          return {
-            ...type,
-            image_url: imageUrl,
-            sizes: sizesByType[typeIndex] || [],
-          };
-        })
-      );
-
+      // Prepare update data
       const updatedData: Partial<ProductWithTypes> = {
         ...data,
         image_url: uploadedImageUrl || serverImage || undefined,
-        types: typesWithImages,
       };
+
+      // Only include types if there are any types to update
+      if (types && types.length > 0) {
+        // Upload type images if any
+        const typesWithImages = await Promise.all(
+          types.map(async (type, typeIndex) => {
+            const typeImage = typeImages[typeIndex];
+            let imageUrl = serverTypeImages[typeIndex] || "";
+
+            if (typeImage) {
+              try {
+                imageUrl = await uploadProductTypeImage(typeImage);
+              } catch (error) {
+                console.error(`خطأ في رفع صورة النوع ${typeIndex + 1}:`, error);
+                toast.error(`فشل في رفع صورة النوع ${typeIndex + 1}`);
+              }
+            }
+
+            return {
+              ...type,
+              image_url: imageUrl,
+              sizes: sizesByType[typeIndex] || [],
+            };
+          })
+        );
+
+        updatedData.types = typesWithImages;
+      }
 
       // تنفيذ التحديث في Supabase
       const updated = await updateProduct(id, updatedData);

@@ -328,12 +328,12 @@ export async function updateProduct(
     throw new Error("تعذر تحديث المنتج");
   }
 
-  // If there are types to update, handle them
-  if (types) {
+  // Only update types if they are explicitly provided in the update
+  if (types !== undefined) {
     // Delete existing types (sizes will be deleted automatically due to CASCADE)
     await supabase.from("product_types").delete().eq("product_id", id);
 
-    // Insert new types
+    // Insert new types only if there are types to add
     if (types.length > 0) {
       for (const type of types) {
         const { sizes, ...typeData } = type;
@@ -367,6 +367,26 @@ export async function updateProduct(
         }
       }
     }
+  }
+
+  return data;
+}
+
+export async function updateProductBasic(
+  id: string,
+  updatedProduct: Partial<Product>
+) {
+  // Update only the basic product fields without touching types and sizes
+  const { data, error } = await supabase
+    .from("products")
+    .update(updatedProduct)
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("خطأ في تحديث المنتج:", error.message);
+    throw new Error("تعذر تحديث المنتج");
   }
 
   return data;
