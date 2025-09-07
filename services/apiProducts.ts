@@ -135,7 +135,6 @@ export async function createProduct(
 ): Promise<ProductWithTypes> {
   const { types, ...product } = productData;
 
-  // Create the product first
   const { data: createdProduct, error: productError } = await supabase
     .from("products")
     .insert([product])
@@ -147,12 +146,10 @@ export async function createProduct(
     throw new Error("تعذر إنشاء المنتج");
   }
 
-  // If there are types, create them
   if (types && types.length > 0) {
     for (const type of types) {
       const { sizes, ...typeData } = type;
 
-      // Create the type
       const { data: createdType, error: typeError } = await supabase
         .from("product_types")
         .insert([{ ...typeData, product_id: createdProduct.id }])
@@ -164,7 +161,6 @@ export async function createProduct(
         continue;
       }
 
-      // If there are sizes, create them
       if (sizes && sizes.length > 0) {
         const sizesWithTypeId = sizes.map((size) => ({
           ...size,
@@ -200,7 +196,6 @@ export async function uploadProductImage(
       .substring(2)}.${fileExt}`;
     fileData = file;
   } else {
-    // Base64 case
     fileExt = file.name.split(".").pop()!;
     fileName = `${folder}/${Date.now()}-${Math.random()
       .toString(36)
@@ -240,7 +235,6 @@ export async function uploadProductTypeImage(
       .substring(2)}.${fileExt}`;
     fileData = file;
   } else {
-    // Base64 case
     fileExt = file.name.split(".").pop()!;
     fileName = `product-type-img/${Date.now()}-${Math.random()
       .toString(36)
@@ -267,7 +261,6 @@ export async function uploadProductTypeImage(
 }
 
 export async function deleteProduct(id: string) {
-  // First, get the product to check if it has an image
   const { data: product, error: fetchError } = await supabase
     .from("products")
     .select("image_url")
@@ -279,7 +272,6 @@ export async function deleteProduct(id: string) {
     throw new Error("حدث خطأ أثناء جلب بيانات المنتج");
   }
 
-  // Delete the image if it exists
   if (product?.image_url) {
     const path = new URL(product.image_url).pathname;
     const match = path.match(
@@ -298,7 +290,6 @@ export async function deleteProduct(id: string) {
     }
   }
 
-  // Delete the product (types and sizes will be deleted automatically due to CASCADE)
   const { error: deleteError } = await supabase
     .from("products")
     .delete()
@@ -315,7 +306,6 @@ export async function updateProduct(
 ) {
   const { types, ...product } = updatedProduct;
 
-  // Update the product
   const { data, error } = await supabase
     .from("products")
     .update(product)
@@ -328,44 +318,87 @@ export async function updateProduct(
     throw new Error("تعذر تحديث المنتج");
   }
 
-  // Only update types if they are explicitly provided in the update
   if (types !== undefined) {
-    // Delete existing types (sizes will be deleted automatically due to CASCADE)
-    await supabase.from("product_types").delete().eq("product_id", id);
+    const { data: existingTypes } = await supabase
+      .from("product_types")
+      .select("id")
+      .eq("product_id", id);
 
-    // Insert new types only if there are types to add
-    if (types.length > 0) {
-      for (const type of types) {
-        const { sizes, ...typeData } = type;
+    const existingTypeIds = existingTypes?.map(t => t.id) || [];
+    const processedTypeIds: string[] = [];
 
-        // Create the type
-        const { data: createdType, error: typeError } = await supabase
+    for (const type of types) {
+      const { sizes, ...typeData } = type;
+      let typeId: string;
+
+      if (type.id && existingTypeIds.includes(type.id)) {
+        await supabase.from("product_types").update(typeData).eq("id", type.id);
+        typeId = type.id;
+        processedTypeIds.push(typeId);
+      } else {
+        const { data: createdType } = await supabase
           .from("product_types")
           .insert([{ ...typeData, product_id: id }])
           .select()
           .single();
 
-        if (typeError) {
-          console.error("خطأ في تحديث نوع المنتج:", typeError);
-          continue;
-        }
+        typeId = createdType.id;
+        processedTypeIds.push(typeId);
+      }
 
-        // If there are sizes, create them
-        if (sizes && sizes.length > 0) {
-          const sizesWithTypeId = sizes.map((size) => ({
-            ...size,
-            type_id: createdType.id,
-          }));
+      if (sizes !== undefined) {
+        const { data: existingSizes } = await supabase
+          .from("product_sizes")
+          .select("id")
+          .eq("type_id", typeId);
 
-          const { error: sizesError } = await supabase
-            .from("product_sizes")
-            .insert(sizesWithTypeId);
+        const existingSizeIds = existingSizes?.map(s => s.id) || [];
+        const processedSizeIds: string[] = [];
 
-          if (sizesError) {
-            console.error("خطأ في تحديث أحجام المنتج:", sizesError);
+        for (const size of sizes) {
+          const { id, created_at, ...sizeData } = size;
+
+          if (id && existingSizeIds.includes(id)) {
+            await supabase
+              .from("product_sizes")
+              .update({
+                ...sizeData,
+                price: Number(size.price) || 0,
+                offer_price: size.offer_price ? Number(size.offer_price) : null,
+              })
+              .eq("id", id);
+
+            processedSizeIds.push(id);
+          } else {
+            const { data: createdSize } = await supabase
+              .from("product_sizes")
+              .insert([{
+                ...sizeData,
+                type_id: typeId,
+                price: Number(size.price) || 0,
+                offer_price: size.offer_price ? Number(size.offer_price) : null,
+              }])
+              .select()
+              .single();
+
+            processedSizeIds.push(createdSize.id);
           }
         }
+
+        const sizesToDelete = existingSizeIds.filter(
+          id => !processedSizeIds.includes(id)
+        );
+        if (sizesToDelete.length > 0) {
+          await supabase.from("product_sizes").delete().in("id", sizesToDelete);
+        }
       }
+    }
+
+    const typesToDelete = existingTypeIds.filter(
+      id => !processedTypeIds.includes(id)
+    );
+    if (typesToDelete.length > 0) {
+      await supabase.from("product_types").delete().in("id", typesToDelete);
     }
   }
 
@@ -376,7 +409,6 @@ export async function updateProductBasic(
   id: string,
   updatedProduct: Partial<Product>
 ) {
-  // Update only the basic product fields without touching types and sizes
   const { data, error } = await supabase
     .from("products")
     .update(updatedProduct)
