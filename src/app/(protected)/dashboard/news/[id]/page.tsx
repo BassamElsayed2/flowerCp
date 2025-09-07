@@ -106,15 +106,16 @@ export default function EditProductPage() {
 
       // Set types and sizes
       if (product.types) {
-        setTypes(
-          product.types.map((type) => ({
-            id: type.id,
-            product_id: type.product_id,
-            name_ar: type.name_ar,
-            name_en: type.name_en,
-            image_url: type.image_url,
-          }))
-        );
+        const mappedTypes = product.types.map((type) => ({
+          id: type.id,
+          product_id: type.product_id,
+          name_ar: type.name_ar,
+          name_en: type.name_en,
+          image_url: type.image_url,
+        }));
+        
+        console.log("الأنواع المحملة من قاعدة البيانات:", mappedTypes);
+        setTypes(mappedTypes);
 
         // Set server type images
         const typeImagesMap: { [key: number]: string | null } = {};
@@ -126,7 +127,7 @@ export default function EditProductPage() {
         const sizesMap: { [key: number]: ProductSize[] } = {};
         product.types.forEach((type, index) => {
           if (type.sizes) {
-            sizesMap[index] = type.sizes.map((size) => ({
+            const mappedSizes = type.sizes.map((size) => ({
               id: size.id,
               type_id: size.type_id,
               size_ar: size.size_ar,
@@ -134,6 +135,8 @@ export default function EditProductPage() {
               price: size.price,
               offer_price: size.offer_price,
             }));
+            console.log(`أحجام النوع ${index + 1}:`, mappedSizes);
+            sizesMap[index] = mappedSizes;
           }
         });
         setSizesByType(sizesMap);
@@ -235,6 +238,7 @@ export default function EditProductPage() {
   ) => {
     const updatedTypes = [...types];
     updatedTypes[index] = { ...updatedTypes[index], [field]: value };
+    console.log(`تحديث النوع ${index}:`, updatedTypes[index]);
     setTypes(updatedTypes);
   };
 
@@ -270,6 +274,7 @@ export default function EditProductPage() {
     setSizesByType((prev) => {
       const updatedSizes = [...(prev[typeIndex] || [])];
       updatedSizes[sizeIndex] = { ...updatedSizes[sizeIndex], [field]: value };
+      console.log(`تحديث الحجم ${sizeIndex + 1} للنوع ${typeIndex + 1}:`, updatedSizes[sizeIndex]);
       return {
         ...prev,
         [typeIndex]: updatedSizes,
@@ -300,6 +305,8 @@ export default function EditProductPage() {
 
       // Only include types if there are any types to update
       if (types && types.length > 0) {
+        console.log("الأنواع المرسلة للتحديث:", types);
+        
         // Upload type images if any
         const typesWithImages = await Promise.all(
           types.map(async (type, typeIndex) => {
@@ -323,6 +330,7 @@ export default function EditProductPage() {
           })
         );
 
+        console.log("الأنواع مع الصور:", typesWithImages);
         updatedData.types = typesWithImages;
       }
 
