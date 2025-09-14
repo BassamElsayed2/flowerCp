@@ -53,16 +53,18 @@ export default function EditProductPage() {
   const router = useRouter();
 
   // Types and Sizes management
-  const [types, setTypes] = useState<ProductType[]>([]);
+  const [types, setTypes] = useState<(ProductType & { tempId?: string })[]>([]);
   const [sizesByType, setSizesByType] = useState<{
-    [key: number]: ProductSize[];
+    [key: string]: ProductSize[];
   }>({});
-  const [typeImages, setTypeImages] = useState<{ [key: number]: File | null }>(
+  const [typeImages, setTypeImages] = useState<{ [key: string]: File | null }>(
     {}
   );
   const [serverTypeImages, setServerTypeImages] = useState<{
-    [key: number]: string | null;
+    [key: string]: string | null;
   }>({});
+  const [isDataInitialized, setIsDataInitialized] = useState(false);
+  const [loadedProductId, setLoadedProductId] = useState<string | null>(null);
 
   const { register, handleSubmit, reset, control } = useForm({
     defaultValues: {
@@ -91,7 +93,7 @@ export default function EditProductPage() {
   });
 
   useEffect(() => {
-    if (product) {
+    if (product && (!isDataInitialized || loadedProductId !== product.id)) {
       reset({
         title_ar: product.title_ar || "",
         title_en: product.title_en || "",
@@ -104,29 +106,26 @@ export default function EditProductPage() {
         setServerImage(product.image_url);
       }
 
-      // Set types and sizes
+      // Set types and sizes with stable IDs
       if (product.types) {
-        setTypes(
-          product.types.map((type) => ({
-            id: type.id,
-            product_id: type.product_id,
-            name_ar: type.name_ar,
-            name_en: type.name_en,
-            image_url: type.image_url,
-          }))
-        );
+        const typesWithIds = product.types.map((type, index) => ({
+          ...type,
+          tempId: `existing_${type.id || index}`,
+        }));
+        setTypes(typesWithIds);
 
-        // Set server type images
-        const typeImagesMap: { [key: number]: string | null } = {};
-        product.types.forEach((type, index) => {
-          typeImagesMap[index] = type.image_url || null;
+        // Set server type images using tempId
+        const typeImagesMap: { [key: string]: string | null } = {};
+        typesWithIds.forEach((type) => {
+          typeImagesMap[type.tempId!] = type.image_url || null;
         });
         setServerTypeImages(typeImagesMap);
 
-        const sizesMap: { [key: number]: ProductSize[] } = {};
-        product.types.forEach((type, index) => {
-          if (type.sizes) {
-            sizesMap[index] = type.sizes.map((size) => ({
+        const sizesMap: { [key: string]: ProductSize[] } = {};
+        typesWithIds.forEach((type) => {
+          const originalType = product.types!.find((t) => t.id === type.id);
+          if (originalType?.sizes) {
+            sizesMap[type.tempId!] = originalType.sizes.map((size) => ({
               id: size.id,
               type_id: size.type_id,
               size_ar: size.size_ar,
@@ -138,8 +137,11 @@ export default function EditProductPage() {
         });
         setSizesByType(sizesMap);
       }
+
+      setIsDataInitialized(true);
+      setLoadedProductId(product.id || null);
     }
-  }, [product, reset]);
+  }, [product, isDataInitialized, loadedProductId, reset]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || !e.target.files[0]) return;
@@ -149,7 +151,7 @@ export default function EditProductPage() {
 
   // Handle type image upload
   const handleTypeImageChange = (
-    typeIndex: number,
+    tempId: string,
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
     if (event.target.files && event.target.files[0]) {
@@ -169,77 +171,82 @@ export default function EditProductPage() {
 
       setTypeImages((prev) => ({
         ...prev,
-        [typeIndex]: file,
+        [tempId]: file,
       }));
     }
   };
 
-  const handleRemoveTypeImage = (typeIndex: number) => {
+  const handleRemoveTypeImage = (tempId: string) => {
     setTypeImages((prev) => ({
       ...prev,
-      [typeIndex]: null,
+      [tempId]: null,
     }));
   };
 
-  const handleRemoveServerTypeImage = (typeIndex: number) => {
+  const handleRemoveServerTypeImage = (tempId: string) => {
     setServerTypeImages((prev) => ({
       ...prev,
-      [typeIndex]: null,
+      [tempId]: null,
     }));
   };
 
   // Types management
   const addType = () => {
-    const newType: ProductType = {
+    const tempId = `new_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2)}`;
+    const newType: ProductType & { tempId: string } = {
       product_id: id || "",
       name_ar: "",
       name_en: "",
+      tempId: tempId,
     };
     setTypes([...types, newType]);
+
+    // Initialize empty sizes array for new type
+    setSizesByType((prev) => ({
+      ...prev,
+      [tempId]: [],
+    }));
   };
 
-  const removeType = (index: number) => {
-    setTypes(types.filter((_, i) => i !== index));
+  const removeType = (tempId: string) => {
+    setTypes(types.filter((type) => type.tempId !== tempId));
 
     // Remove images for this type
-    const newTypeImages = { ...typeImages };
-    delete newTypeImages[index];
-    setTypeImages(newTypeImages);
+    setTypeImages((prev) => {
+      const newImages = { ...prev };
+      delete newImages[tempId];
+      return newImages;
+    });
 
-    const newServerTypeImages = { ...serverTypeImages };
-    delete newServerTypeImages[index];
-    setServerTypeImages(newServerTypeImages);
+    setServerTypeImages((prev) => {
+      const newImages = { ...prev };
+      delete newImages[tempId];
+      return newImages;
+    });
 
     // Remove sizes for this type
     setSizesByType((prev) => {
       const newSizes = { ...prev };
-      delete newSizes[index];
-      // Shift remaining sizes
-      const shiftedSizes: { [key: number]: ProductSize[] } = {};
-      Object.keys(newSizes).forEach((key) => {
-        const numKey = parseInt(key);
-        if (numKey > index) {
-          shiftedSizes[numKey - 1] = newSizes[numKey];
-        } else {
-          shiftedSizes[numKey] = newSizes[numKey];
-        }
-      });
-      return shiftedSizes;
+      delete newSizes[tempId];
+      return newSizes;
     });
   };
 
   const updateType = (
-    index: number,
+    tempId: string,
     field: keyof ProductType,
     value: string
   ) => {
-    const updatedTypes = [...types];
-    updatedTypes[index] = { ...updatedTypes[index], [field]: value };
+    const updatedTypes = types.map((type) =>
+      type.tempId === tempId ? { ...type, [field]: value } : type
+    );
     setTypes(updatedTypes);
   };
 
   // Sizes management
-  const addSize = (typeIndex: number) => {
+  const addSize = (tempId: string) => {
     const newSize: ProductSize = {
       type_id: "",
       size_ar: "",
@@ -250,29 +257,29 @@ export default function EditProductPage() {
 
     setSizesByType((prev) => ({
       ...prev,
-      [typeIndex]: [...(prev[typeIndex] || []), newSize],
+      [tempId]: [...(prev[tempId] || []), newSize],
     }));
   };
 
-  const removeSize = (typeIndex: number, sizeIndex: number) => {
+  const removeSize = (tempId: string, sizeIndex: number) => {
     setSizesByType((prev) => ({
       ...prev,
-      [typeIndex]: prev[typeIndex]?.filter((_, i) => i !== sizeIndex) || [],
+      [tempId]: prev[tempId]?.filter((_, i) => i !== sizeIndex) || [],
     }));
   };
 
   const updateSize = (
-    typeIndex: number,
+    tempId: string,
     sizeIndex: number,
     field: keyof ProductSize,
     value: string | number | undefined
   ) => {
     setSizesByType((prev) => {
-      const updatedSizes = [...(prev[typeIndex] || [])];
+      const updatedSizes = [...(prev[tempId] || [])];
       updatedSizes[sizeIndex] = { ...updatedSizes[sizeIndex], [field]: value };
       return {
         ...prev,
-        [typeIndex]: updatedSizes,
+        [tempId]: updatedSizes,
       };
     });
   };
@@ -303,8 +310,9 @@ export default function EditProductPage() {
         // Upload type images if any
         const typesWithImages = await Promise.all(
           types.map(async (type, typeIndex) => {
-            const typeImage = typeImages[typeIndex];
-            let imageUrl = serverTypeImages[typeIndex] || "";
+            const tempId = type.tempId!;
+            const typeImage = typeImages[tempId];
+            let imageUrl = serverTypeImages[tempId] || "";
 
             if (typeImage) {
               try {
@@ -315,10 +323,13 @@ export default function EditProductPage() {
               }
             }
 
+            // Remove tempId from final object
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { tempId: _, ...typeWithoutTempId } = type;
             return {
-              ...type,
+              ...typeWithoutTempId,
               image_url: imageUrl,
-              sizes: sizesByType[typeIndex] || [],
+              sizes: sizesByType[tempId] || [],
             };
           })
         );
@@ -591,7 +602,7 @@ export default function EditProductPage() {
                 <div className="space-y-6">
                   {types.map((type, typeIndex) => (
                     <div
-                      key={typeIndex}
+                      key={type.tempId || typeIndex}
                       className="border border-gray-200 dark:border-[#172036] rounded-md p-4"
                     >
                       <div className="flex items-center justify-between mb-4">
@@ -600,7 +611,7 @@ export default function EditProductPage() {
                         </h6>
                         <button
                           type="button"
-                          onClick={() => removeType(typeIndex)}
+                          onClick={() => removeType(type.tempId!)}
                           className="text-red-500 hover:text-red-700"
                         >
                           <i className="material-symbols-outlined">delete</i>
@@ -619,7 +630,11 @@ export default function EditProductPage() {
                             placeholder="مثل: رول، مثلث، عادي"
                             value={type.name_ar}
                             onChange={(e) =>
-                              updateType(typeIndex, "name_ar", e.target.value)
+                              updateType(
+                                type.tempId!,
+                                "name_ar",
+                                e.target.value
+                              )
                             }
                           />
                         </div>
@@ -634,7 +649,11 @@ export default function EditProductPage() {
                             placeholder="مثل: Roll, Triangle, Regular"
                             value={type.name_en}
                             onChange={(e) =>
-                              updateType(typeIndex, "name_en", e.target.value)
+                              updateType(
+                                type.tempId!,
+                                "name_en",
+                                e.target.value
+                              )
                             }
                           />
                         </div>
@@ -666,7 +685,7 @@ export default function EditProductPage() {
                             accept="image/*"
                             className="absolute top-0 left-0 right-0 bottom-0 rounded-md z-[1] opacity-0 cursor-pointer"
                             onChange={(e) =>
-                              handleTypeImageChange(typeIndex, e)
+                              handleTypeImageChange(type.tempId!, e)
                             }
                           />
                         </div>
@@ -674,10 +693,13 @@ export default function EditProductPage() {
                         {/* Image Preview */}
                         <div className="mt-[10px] flex flex-wrap gap-2">
                           {/* صورة السيرفر للنوع */}
-                          {serverTypeImages[typeIndex] && (
+                          {serverTypeImages[type.tempId!] && (
                             <div className="relative w-[50px] h-[50px]">
                               <Image
-                                src={serverTypeImages[typeIndex]}
+                                src={
+                                  serverTypeImages[type.tempId!] ||
+                                  "/placeholder.png"
+                                }
                                 alt={`server-type-img-${typeIndex}`}
                                 width={50}
                                 height={50}
@@ -691,7 +713,7 @@ export default function EditProductPage() {
                                 type="button"
                                 className="absolute top-[-5px] right-[-5px] bg-red-600 text-white w-[20px] h-[20px] flex items-center justify-center rounded-full text-xs"
                                 onClick={() =>
-                                  handleRemoveServerTypeImage(typeIndex)
+                                  handleRemoveServerTypeImage(type.tempId!)
                                 }
                               >
                                 ✕
@@ -700,10 +722,12 @@ export default function EditProductPage() {
                           )}
 
                           {/* صورة الرفع الجديدة للنوع */}
-                          {typeImages[typeIndex] && (
+                          {typeImages[type.tempId!] && (
                             <div className="relative w-[50px] h-[50px]">
                               <Image
-                                src={URL.createObjectURL(typeImages[typeIndex])}
+                                src={URL.createObjectURL(
+                                  typeImages[type.tempId!]!
+                                )}
                                 alt={`selected-type-img-${typeIndex}`}
                                 width={50}
                                 height={50}
@@ -712,7 +736,9 @@ export default function EditProductPage() {
                               <button
                                 type="button"
                                 className="absolute top-[-5px] right-[-5px] bg-orange-500 text-white w-[20px] h-[20px] flex items-center justify-center rounded-full text-xs"
-                                onClick={() => handleRemoveTypeImage(typeIndex)}
+                                onClick={() =>
+                                  handleRemoveTypeImage(type.tempId!)
+                                }
                               >
                                 ✕
                               </button>
@@ -729,7 +755,7 @@ export default function EditProductPage() {
                           </h6>
                           <button
                             type="button"
-                            onClick={() => addSize(typeIndex)}
+                            onClick={() => addSize(type.tempId!)}
                             className="font-medium inline-block transition-all rounded-md text-sm py-[6px] px-[12px] bg-green-500 text-white hover:bg-green-400"
                           >
                             <i className="material-symbols-outlined ltr:mr-1 rtl:ml-1 text-sm">
@@ -739,14 +765,14 @@ export default function EditProductPage() {
                           </button>
                         </div>
 
-                        {(sizesByType[typeIndex] || []).length === 0 ? (
+                        {(sizesByType[type.tempId!] || []).length === 0 ? (
                           <p className="text-gray-500 dark:text-gray-400 text-center py-4">
                             لا توجد أحجام لهذا النوع. اضغط على &quot;إضافة
                             حجم&quot; لإضافة حجم جديد.
                           </p>
                         ) : (
                           <div className="space-y-3">
-                            {(sizesByType[typeIndex] || []).map(
+                            {(sizesByType[type.tempId!] || []).map(
                               (size, sizeIndex) => (
                                 <div
                                   key={sizeIndex}
@@ -759,7 +785,7 @@ export default function EditProductPage() {
                                     <button
                                       type="button"
                                       onClick={() =>
-                                        removeSize(typeIndex, sizeIndex)
+                                        removeSize(type.tempId!, sizeIndex)
                                       }
                                       className="text-red-500 hover:text-red-700"
                                     >
@@ -781,7 +807,7 @@ export default function EditProductPage() {
                                         value={size.size_ar}
                                         onChange={(e) =>
                                           updateSize(
-                                            typeIndex,
+                                            type.tempId!,
                                             sizeIndex,
                                             "size_ar",
                                             e.target.value
@@ -801,7 +827,7 @@ export default function EditProductPage() {
                                         value={size.size_en}
                                         onChange={(e) =>
                                           updateSize(
-                                            typeIndex,
+                                            type.tempId!,
                                             sizeIndex,
                                             "size_en",
                                             e.target.value
@@ -821,7 +847,7 @@ export default function EditProductPage() {
                                         value={size.price}
                                         onChange={(e) =>
                                           updateSize(
-                                            typeIndex,
+                                            type.tempId!,
                                             sizeIndex,
                                             "price",
                                             Number(e.target.value)
@@ -841,7 +867,7 @@ export default function EditProductPage() {
                                         value={size.offer_price || ""}
                                         onChange={(e) =>
                                           updateSize(
-                                            typeIndex,
+                                            type.tempId!,
                                             sizeIndex,
                                             "offer_price",
                                             e.target.value

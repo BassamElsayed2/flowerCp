@@ -330,15 +330,42 @@ export async function updateProduct(
 
   // Only update types if they are explicitly provided in the update
   if (types !== undefined) {
-    // Delete existing types (sizes will be deleted automatically due to CASCADE)
-    await supabase.from("product_types").delete().eq("product_id", id);
+    // Get existing types to compare
+    const { data: existingTypes } = await supabase
+      .from("product_types")
+      .select("id")
+      .eq("product_id", id);
 
-    // Insert new types only if there are types to add
-    if (types.length > 0) {
-      for (const type of types) {
-        const { sizes, ...typeData } = type;
+    const existingTypeIds = existingTypes?.map((t) => t.id) || [];
+    const incomingTypeIds = types.filter((t) => t.id).map((t) => t.id);
 
-        // Create the type
+    // Delete types that are no longer in the incoming data
+    const typesToDelete = existingTypeIds.filter(
+      (id) => !incomingTypeIds.includes(id)
+    );
+    if (typesToDelete.length > 0) {
+      await supabase.from("product_types").delete().in("id", typesToDelete);
+    }
+
+    // Process each type
+    for (const type of types) {
+      const { sizes, ...typeData } = type;
+
+      let typeId = type.id;
+
+      if (type.id && existingTypeIds.includes(type.id)) {
+        // Update existing type
+        const { error: updateError } = await supabase
+          .from("product_types")
+          .update(typeData)
+          .eq("id", type.id);
+
+        if (updateError) {
+          console.error("خطأ في تحديث نوع المنتج:", updateError);
+          continue;
+        }
+      } else {
+        // Create new type
         const { data: createdType, error: typeError } = await supabase
           .from("product_types")
           .insert([{ ...typeData, product_id: id }])
@@ -346,23 +373,48 @@ export async function updateProduct(
           .single();
 
         if (typeError) {
-          console.error("خطأ في تحديث نوع المنتج:", typeError);
+          console.error("خطأ في إنشاء نوع المنتج:", typeError);
           continue;
         }
 
-        // If there are sizes, create them
-        if (sizes && sizes.length > 0) {
-          const sizesWithTypeId = sizes.map((size) => ({
+        typeId = createdType.id;
+      }
+
+      // Handle sizes for this type
+      if (sizes && typeId) {
+        // Get existing sizes for this type
+        const { data: existingSizes } = await supabase
+          .from("product_sizes")
+          .select("id")
+          .eq("type_id", typeId);
+
+        const existingSizeIds = existingSizes?.map((s) => s.id) || [];
+        const incomingSizeIds = sizes.filter((s) => s.id).map((s) => s.id);
+
+        // Delete sizes that are no longer in the incoming data
+        const sizesToDelete = existingSizeIds.filter(
+          (id) => !incomingSizeIds.includes(id)
+        );
+        if (sizesToDelete.length > 0) {
+          await supabase.from("product_sizes").delete().in("id", sizesToDelete);
+        }
+
+        // Process each size
+        for (const size of sizes) {
+          const sizeData = {
             ...size,
-            type_id: createdType.id,
-          }));
+            type_id: typeId,
+          };
 
-          const { error: sizesError } = await supabase
-            .from("product_sizes")
-            .insert(sizesWithTypeId);
-
-          if (sizesError) {
-            console.error("خطأ في تحديث أحجام المنتج:", sizesError);
+          if (size.id && existingSizeIds.includes(size.id)) {
+            // Update existing size
+            await supabase
+              .from("product_sizes")
+              .update(sizeData)
+              .eq("id", size.id);
+          } else {
+            // Create new size
+            await supabase.from("product_sizes").insert([sizeData]);
           }
         }
       }
