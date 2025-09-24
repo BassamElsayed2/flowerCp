@@ -11,6 +11,7 @@ export interface Product {
   user_id: string;
   image_url?: string;
   created_at?: string;
+  sort_order?: number;
 }
 
 export interface ProductType {
@@ -442,4 +443,45 @@ export async function updateProductBasic(
   }
 
   return data;
+}
+
+export async function getProductsForSorting(): Promise<Product[]> {
+  const { data, error } = await supabase
+    .from("products")
+    .select(
+      "id, title_ar, title_en, image_url, sort_order, category_id, user_id"
+    )
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    console.error("خطأ في جلب المنتجات للترتيب:", error.message);
+    throw new Error("تعذر تحميل المنتجات للترتيب");
+  }
+
+  return data || [];
+}
+
+export async function updateProductsOrder(
+  productOrders: { id: string; sort_order: number }[]
+): Promise<void> {
+  try {
+    // Update each product's sort_order
+    for (const product of productOrders) {
+      const { error } = await supabase
+        .from("products")
+        .update({ sort_order: product.sort_order })
+        .eq("id", product.id);
+
+      if (error) {
+        console.error(
+          `خطأ في تحديث ترتيب المنتج ${product.id}:`,
+          error.message
+        );
+        throw new Error(`تعذر تحديث ترتيب المنتج ${product.id}`);
+      }
+    }
+  } catch (error) {
+    console.error("خطأ في تحديث ترتيب المنتجات:", error);
+    throw new Error("تعذر تحديث ترتيب المنتجات");
+  }
 }
